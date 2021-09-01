@@ -1,11 +1,19 @@
 # python-tradingcv2-binance
 A gui made with cv2 for market visualisation using the Binance API
 
+# Setup
+
+Using Python 3.x
+Install requirements :
+```
+pip install -r requirements.txt
+```
+Done !
 
 # Usage
 
 ```
-python3 ./binance_hifreq.py <symbol> -t <candle duration, default : 5 (seconds)> -d <length of data, default : 5 (minutes)>
+python ./binance_hifreq.py <symbol> -t <candle duration, default : 5 (seconds)> -d <length of data, default : 5 (minutes)>
 ```
 Exemple : python3 ./binance_hifreq.py  -t 2 -d 10
 ![Exemple image, candles 2 seconds over 10 minutes](https://github.com/4skl/python-tradingcv2-binance/raw/main/1ETHBUSD2s10min.png)
