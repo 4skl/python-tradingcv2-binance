@@ -1,11 +1,14 @@
-import cv2, json, sys, requests, datetime, time
+import cv2, sys, datetime, time
 import numpy as np
+from trading import *
 # first argument is symbol
 # draw candlestick based on -t <s, default: 5> seconds intervals, and with a duration of -d <d, default: 5> minutes
 
 _windowName = "Candles"
 _default_width = 1600
 _default_height = 800
+_base_font = cv2.FONT_HERSHEY_DUPLEX
+_FPS = 15
 
 # utils to standardize
 import win32gui
@@ -34,86 +37,6 @@ try:
 except ValueError:
     print(f"View duration default value {_d} seconds")
 # check timestamp, ms,...
-
-# api shortcuts
-api_endpoint = "https://api.binance.com"
-api_ping = lambda: requests.get(api_endpoint+"/api/v3/ping")
-api_time = lambda: datetime.datetime.fromtimestamp(requests.get(api_endpoint+"/api/v3/time").json()['serverTime']/1e3)
-api_symbol_data = lambda symbol: requests.get(api_endpoint+f"/api/v3/exchangeInfo?symbol={symbol}")
-api_symbol_priceticker = lambda symbol: requests.get(api_endpoint+f"/api/v3/ticker/price?symbol={symbol}")
-api_symbol_trades = lambda symbol: requests.get(api_endpoint+f"/api/v3/trades?symbol={symbol}")
-api_symbol_aggTrades = lambda symbol, from_, to_: requests.get(api_endpoint+f"/api/v3/aggTrades?symbol={symbol}&startTime={int(from_.timestamp()*1e3)}&endTime={int(to_.timestamp()*1e3)}")
-
-
-# api checks
-if api_ping().json() == {}:
-    print("API Online")
-else:
-    print("API Offline")
-    quit()
-
-# functions
-
-def create_candles(trades, duration): # float duration in seconds
-    # best pricematch & buyermaker ignored
-    d = duration * 1e3 # duration in ms
-    last_trade = trades[-1]
-    open_timestamp = last_trade['T']
-    open_price = float(last_trade['p'])
-    qty = float(last_trade['q']) # volume
-    
-    aws = open_price*qty # actual weighted price sum
-    low_price = open_price
-    high_price = open_price
-
-    '''
-    candle = {
-        'ot': int, # Open time
-        'o': float, # Open price
-        'h': float, # High price
-        'l': float, # Low price
-        'c': float, # Close price
-        'v': float, # Volume
-        'ct': int, # Close time
-        #... Quote asset volume
-    }
-    '''
-    candles = []
-    for trade in trades[::-1][1:]:
-        timestamp = trade['T']
-        if timestamp > open_timestamp-d:
-            q = float(trade['q'])
-            p = float(trade['p'])
-            aws += p * q
-            qty += q
-            if high_price < p:
-                high_price = p
-            elif low_price > p:
-                low_price = p
-        else:
-            # ? open_timestamp = trade['T'] 
-            open_timestamp -= d
-            candles.append({
-                'ot': int(open_timestamp+d), # Open time
-                'o': float(open_price), # Open price
-                'h': float(high_price), # High price
-                'l': float(low_price), # Low price
-                'c': float(last_trade['p']), # Close price
-                'v': float(qty), # Volume
-                'ct': int(open_timestamp), # Close time
-                'aw': float(aws/qty)
-                #... Quote asset volume
-            })
-            open_price = float(trade['p'])
-            qty = float(trade['q']) # volume
-            aws = open_price*qty # actual weighted price sum
-            
-            aws = open_price*qty # actual weighted price sum
-            low_price = open_price
-            high_price = open_price
-        
-        last_trade = trade
-    return candles
 
 # cv2 shortcuts
 # Create a black image
@@ -144,10 +67,11 @@ def draw_candles(img, candles, candle_down_color = [32,32,192], candle_up_color 
             color = candle_color
         else:
             color = candle_up_color if o > c else candle_down_color
-        cv2.line(img,(width-x,height-top),(width-x,height-bottom),color,int(px_by_candle/2))
+        line_size = max(int(px_by_candle/4), 1)
+        cv2.line(img,(width-x,height-top+line_size),(width-x,height-bottom-line_size),color,line_size*3)
         min_ = int((candle['l']-min_price)/(max_price-min_price)*height)
         max_ = int((candle['h']-min_price)/(max_price-min_price)*height)
-        cv2.line(img,(width-x,height-min_),(width-x,height-max_),color,max(int(px_by_candle/5), 2))
+        cv2.line(img,(width-x,height-min_),(width-x,height-max_),color,line_size)
 
         i += 1
     return img, max_price, min_price
@@ -175,7 +99,9 @@ def draw_volume(img, candles, candle_down_color = [32,32,192], candle_up_color =
             color = candle_color
         else:
             color = candle_up_color if o > c else candle_down_color
-        cv2.line(img,(width-x,height-int(height*(v-min_volume)/(max_volume-min_volume))),(width-x,height),color,int(px_by_candle/2))
+
+        line_size = max(int(px_by_candle/2), 1)
+        cv2.line(img,(width-x,height-int(height*(v-min_volume)/(max_volume-min_volume))+line_size),(width-x,height-line_size),color,line_size)
 
         i += 1
     return img, max_volume, min_volume
@@ -187,47 +113,62 @@ def draw_checkbox(img, pos, pressed = False, size = 10, color = (192,192,192)):
     else:
         cv2.rectangle(img, pos, (pos[0]+size, pos[1]+size), color, 1)
 
-def draw_actions(img):
-    # show ma
-    pass
+def draw_ui(top_img, bottom_img, left_img, candles, max_price, min_price, max_volume, min_volume):
+    # draw top
+    height = len(top_img)
+    width = len(top_img[0])
 
-def draw_view(data, width=1600, height=800):
+    font = _base_font
+    st_text = print_timestamp(candles[-1]['ot']/1e3)
+    ed_text = print_timestamp(candles[0]['ct']/1e3)
+    cv2.putText(top_img,f'max price {max_price}',(10, height//2), font, 0.75,(32,255,32),1,cv2.LINE_AA)
+    cv2.putText(top_img,f'max volume {max_volume:.4f}',(width//4, height//2), font, 0.5,(192,192,192), 1,cv2.LINE_AA)
+    cv2.putText(top_img,f'symbol {_symbol} {_t}s candles ({_d} min total)',(width//2, height//2), font, 0.75,(255,255,255),1,cv2.LINE_AA)
 
-    img = blank_img(width=width, height=height)
+    # draw bottom
+    height = len(bottom_img)
+    width = len(bottom_img[0])
+    cv2.putText(bottom_img,f'min price {min_price}',(10,height//2), font, 0.75,(32,32,255),1,cv2.LINE_AA)
+    cv2.putText(bottom_img,f'min volume {min_volume:.4f}',(width//4, height//2), font, 0.5,(192,192,192), 1,cv2.LINE_AA)
+    cv2.putText(bottom_img,f'start {st_text}',(10,height//4*3), font, 0.5,(255,255,255),1,cv2.LINE_AA)
+    cv2.putText(bottom_img,f'end {ed_text}',(width//4*3,height//4*3), font, 0.5,(255,255,255),1,cv2.LINE_AA)
+
+    # draw left (actions)
+    cv2.putText(left_img,f'Checkbox',(10,10), font, 2,(255,255,255),1,cv2.LINE_AA)
+    return top_img, bottom_img, left_img
+
+def draw_view(data, img):
+    height = len(img)
+    width = len(img[0])
+    left_panel_w = width//4
 
     candles = data['candles']
 
-    candles_img = blank_img(width=width-50, height=height//3*2)
+    candles_img = blank_img(width=width-left_panel_w, height=height//3*2)
     candles_img, max_price, min_price = draw_candles(candles_img, candles)
 
-    volume_img = blank_img(width=width-50, height=height//3//3)
+    volume_img = blank_img(width=width-left_panel_w, height=height//3//3)
     volume_img, max_volume, min_volume = draw_volume(volume_img, candles)
 
-    #actions_img = blank_img(width=width-50, height=height//3//3*2)
-    #actions_img = draw_actions(actions_img)
+    top_img = blank_img(width=width-left_panel_w, height=height//3//3)
+    bottom_img = blank_img(width=width-left_panel_w, height=height//3//3)
 
-    # draw above
-    img[30 : candles_img.shape[0] + 30, 25 : width-25] = candles_img
-    img[candles_img.shape[0] + 30*2 : candles_img.shape[0] + volume_img.shape[0] + 30*2, 25 : width-25] = volume_img
+    left_img = blank_img(width=left_panel_w, height=height)
 
-    # draw ui
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    st_text = print_timestamp(candles[-1]['ot']/1e3)
-    ed_text = print_timestamp(candles[0]['ct']/1e3)
-    max_price = candles[0]['h']
-    min_price = candles[0]['l']
-    for candle in candles[1:]:
-        max_price = max(max_price, candle['h'])
-        min_price = min(min_price, candle['l'])
-    cv2.putText(img,f'max price {max_price}',(10, 20), font, 0.75,(32,255,32),2,cv2.LINE_8)
-    cv2.putText(img,f'min price {min_price}',(10,height-20), font, 0.75,(32,32,255),2,cv2.LINE_8)
+    top_img, bottom_img, left_img = draw_ui(top_img, bottom_img, left_img, candles, max_price, min_price, max_volume, min_volume)
 
-    cv2.putText(img,f'max volume {max_volume:.4f}',(width//4*3, candles_img.shape[0] + 45), font, 0.5,(192,192,192), 1,cv2.LINE_8)
-    cv2.putText(img,f'min volume {min_volume:.4f}',(width//4*3, candles_img.shape[0] + volume_img.shape[0] + 75), font, 0.5,(192,192,192), 1,cv2.LINE_8)
+    # draw left part
+    img[0 : left_img.shape[0], 0 : left_img.shape[1]] = left_img
 
-    cv2.putText(img,f'start {st_text}',(width//3,height-30), font, 0.5,(255,255,255),1,cv2.LINE_8)
-    cv2.putText(img,f'end {ed_text}',(width//3*2,height-30), font, 0.5,(255,255,255),1,cv2.LINE_8)
-    cv2.putText(img,f'symbol {_symbol} {_t}s candles',(width//3*2, 20), font, 0.75,(255,255,255),2,cv2.LINE_8)
+    # draw parts vertically
+    vacc = 0
+    img[vacc : vacc + top_img.shape[0], left_panel_w : width] = top_img
+    vacc += top_img.shape[0]
+    img[vacc : vacc + candles_img.shape[0], left_panel_w : width] = candles_img
+    vacc += candles_img.shape[0]
+    img[vacc : vacc + volume_img.shape[0], left_panel_w : width] = volume_img
+    vacc += volume_img.shape[0]
+    img[vacc : vacc + bottom_img.shape[0], left_panel_w : width] = bottom_img
 
     return img
     # show
@@ -247,7 +188,6 @@ from threading import Thread
 
 class App:
     content_img = None
-    view_updater_thread = None
     run = False
     def __init__(self):
         cv2.namedWindow(_windowName, cv2.WINDOW_NORMAL )
@@ -266,11 +206,16 @@ class App:
         elif chr(k & 0xFF) == '-':
             _t *= 2
             _d *= 2
+            self.data = request_view()
         elif chr(k & 0xFF) == '+':
             _t /= 2
             _d /= 2
+            self.data = request_view()
         elif k != -1:
             print(k)
+        else:
+            return
+        self.update_view()
 
     def on_mouse(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -286,12 +231,12 @@ class App:
 
     def run(self):
         self.run = True
-        self.content_img = draw_view(request_view(), width=_default_width, height=_default_height)
-        self.view_updater_thread = Thread(target=self.view_updater)
-        self.view_updater_thread.start()
+        self.content_img = blank_img(width=_default_width, height=_default_height)
+        self.trading_updater_thread = Thread(target=self.trading_updater)
+        self.trading_updater_thread.start()
         while self.run:
             cv2.imshow(_windowName, self.content_img)
-            k = cv2.waitKey(1)
+            k = cv2.waitKey(int(1e3/_FPS))
             self.on_key(k)
 
         self.run = False
@@ -301,16 +246,17 @@ class App:
         try:
             x, y, width, height = get_window_rect(_windowName)
             if width > 0 and height > 0:
-                self.content_img = draw_view(request_view(), width=width, height=height)
+                self.content_img = draw_view(self.data, blank_img(width=_default_width, height=_default_height))
         except Exception as e:
             print(f"Update Error : {e}")
 
-    def view_updater(self):
+    def trading_updater(self):
         #print('called')
         while self.run:
             #print("update")
+            self.data = request_view()
             self.update_view()
-            time.sleep(_ut)
+            time.sleep(_ut) # todo move update view in main while and do request with a timing
 
 
 if __name__ == '__main__':
