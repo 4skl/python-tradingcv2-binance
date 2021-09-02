@@ -6,6 +6,7 @@ import numpy as np
 _windowName = "Candles"
 _default_width = 1600
 _default_height = 800
+_FPS = 30
 
 # utils to standardize
 import win32gui
@@ -191,10 +192,9 @@ def draw_actions(img):
     # show ma
     pass
 
-def draw_view(data, width=1600, height=800):
-
-    img = blank_img(width=width, height=height)
-
+def draw_view(data, img):
+    height = len(img)
+    width = len(img[0])
     candles = data['candles']
 
     candles_img = blank_img(width=width-50, height=height//3*2)
@@ -247,7 +247,7 @@ from threading import Thread
 
 class App:
     content_img = None
-    view_updater_thread = None
+    trading_updater_thread = None
     run = False
     def __init__(self):
         cv2.namedWindow(_windowName, cv2.WINDOW_NORMAL )
@@ -266,11 +266,17 @@ class App:
         elif chr(k & 0xFF) == '-':
             _t *= 2
             _d *= 2
+            self.data = request_view()
         elif chr(k & 0xFF) == '+':
             _t /= 2
             _d /= 2
+            self.data = request_view()
         elif k != -1:
             print(k)
+            return
+        else:
+            return
+        self.update_view()
 
     def on_mouse(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -286,12 +292,12 @@ class App:
 
     def run(self):
         self.run = True
-        self.content_img = draw_view(request_view(), width=_default_width, height=_default_height)
-        self.view_updater_thread = Thread(target=self.view_updater)
-        self.view_updater_thread.start()
+        self.content_img = blank_img(width=_default_width, height=_default_height)
+        self.trading_updater_thread = Thread(target=self.trading_updater)
+        self.trading_updater_thread.start()
         while self.run:
             cv2.imshow(_windowName, self.content_img)
-            k = cv2.waitKey(1)
+            k = cv2.waitKey(int(1e3/_FPS))
             self.on_key(k)
 
         self.run = False
@@ -301,14 +307,15 @@ class App:
         try:
             x, y, width, height = get_window_rect(_windowName)
             if width > 0 and height > 0:
-                self.content_img = draw_view(request_view(), width=width, height=height)
+                self.content_img = draw_view(self.data, width=width, height=height)
         except Exception as e:
             print(f"Update Error : {e}")
 
-    def view_updater(self):
+    def trading_updater(self):
         #print('called')
         while self.run:
             #print("update")
+            self.data = request_view()
             self.update_view()
             time.sleep(_ut)
 
