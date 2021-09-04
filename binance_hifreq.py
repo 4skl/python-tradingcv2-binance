@@ -307,7 +307,7 @@ class App:
         try:
             x, y, width, height = get_window_rect(_windowName)
             if width > 0 and height > 0:
-                self.content_img = draw_view(self.data, width=width, height=height)
+                self.content_img = draw_view(self.data, blank_img(width=_default_width, height=_default_height))
         except Exception as e:
             print(f"Update Error : {e}")
 
